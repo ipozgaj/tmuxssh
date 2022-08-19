@@ -1,0 +1,91 @@
+#!/bin/bash
+# tmuxssh - spawn ssh sessions in a new tmux windows/panes
+
+set -ueo pipefail
+
+function display_usage()
+{
+    echo "tmuxssh [OPTION]... [HOSTNAME]..."
+    echo ""
+    echo "OPTIONS:"
+    echo "  -h           Display usage information"
+    echo "  -c command   Send command to all panes after connecting"
+    echo "  -r           Connect as root"
+    echo "  -s           Set pane synchronization to on (keys go to all panes)"
+    echo "  -u username  Connect as user <username>"
+    echo "  -w           Open each SSH session in a separate window"
+}
+
+cmd=""
+tmux_window_available=0
+tmux_sync_panes=0
+tmux_windows=0
+
+# default user is the user running the command
+user=$(id -nu)
+
+while getopts ":hc:rsu:w" opt; do
+    case $opt in
+        h)
+            display_usage
+            exit
+            ;;
+        c)
+            cmd="$OPTARG"
+            ;;
+        r)
+            user="root"
+            ;;
+        s)
+            tmux_sync_panes=1
+            ;;
+        u)
+            user="$OPTARG"
+            ;;
+        w)
+            tmux_windows=1
+            ;;
+        \?)
+            echo "Invalid option -$OPTARG" >&2
+            ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+if [ $tmux_windows -eq 1 ]; then
+    if [ $tmux_sync_panes -eq 1 ] || [ "$cmd" != "" ]; then
+        echo "-s and -c can't be used with -w"
+        exit
+    fi
+fi
+
+for host in "$@"
+do
+    if [ $tmux_windows -eq 1 ]; then
+        tmux new-window "ssh $user@$host"
+        tmux rename-window "$user@$host"
+        continue
+    fi
+
+    if [ $tmux_window_available -eq 0 ]; then
+        tmux new-window "ssh $user@$host"
+        tmux rename-window "tmuxssh"
+        tmux_window_available=1
+    else
+        tmux split-window "ssh $user@$host"
+        tmux select-layout tiled > /dev/null
+    fi
+done
+
+if [ "$cmd" != "" ]; then
+    tmux setw synchronize-panes on > /dev/null
+    tmux send-keys "$cmd" Enter
+    tmux setw synchronize-panes off > /dev/null
+fi
+
+if [ $tmux_sync_panes -ne 0 ]; then
+    tmux setw synchronize-panes > /dev/null
+fi
+
+
